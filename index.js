@@ -1,15 +1,42 @@
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
 const app = express();
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
 
-app.use(cors());
+app.use(cors({
+    origin: ['http://localhost:5173'],
+    credentials: true
+}));
 app.use(express.json());
+app.use(cookieParser());
 
-//DB_USER = job_hunter
-//DB_PASS = DVREUdMmh3UQtB5i
+// DB_USER = job_hunter
+// DB_PASS = DVREUdMmh3UQtB5i
+// JWT_SECRET=1039b19c71cb3f8443ad581a710a2de4fa2ca4efb839be7e404d09a4cd6d38c57e68e4fbf3ac625aaa02a563dc7a1360b9a58f20fad571bd362022a4620ac0a7
+
+const logger = (req, res, next) => {
+    console.log('inside the logger');
+    next();
+}
+
+const verifyToken = (req, res, next) => {
+    // console.log('inside verify token middleware');
+    const token = req?.cookies?.token;
+    if (!token) {
+        return res.status(401).send({ message: 'Unauthorized access' })
+    }
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) {
+            return res.status(401).send({ message: 'Unauthorized Access' })
+        }
+        req.user = decoded;
+        next();
+    })
+}
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.y7u2i.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -34,7 +61,21 @@ async function run() {
         const jobsCollection = client.db('jobPortal').collection('job');
         const jobApplicationCollection = client.db('jobPortal').collection('job-applications');
 
-        app.get('/job', async (req, res) => {
+        //auth related apis
+        app.post('/jwt', async (req, res) => {
+            const user = req.body;
+            const token = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '1h' });
+            res
+                .cookie('token', token, {
+                    httpOnly: true,
+                    secure: false
+                })
+                .send({ success: true });
+        })
+
+        //job related apis
+        app.get('/job', logger, async (req, res) => {
+            console.log('now inside the apis callback   ')
             const email = req.query.email;
             let query = {};
             if (email) {
@@ -59,9 +100,14 @@ async function run() {
         })
 
         // job application apis
-        app.get('/job-application', async (req, res) => {
+        app.get('/job-application', verifyToken, async (req, res) => {
             const email = req.query.email;
             const query = { applicant_email: email }
+
+            if (req.user.email !== req.query.email) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+
             const result = await jobApplicationCollection.find(query).toArray();
 
             for (const application of result) {
